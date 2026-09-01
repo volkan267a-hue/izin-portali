@@ -160,6 +160,40 @@ async function loadAllReports() {
     state.allReports = [];
   }
 }
+function normalizePeriodicCheck(id, d) {
+  return {
+    id,
+    employee_id: d.employeeId,
+    employee_name: d.employeeName,
+    department: d.department,
+    check_type: d.checkType,
+    due_date: d.dueDate,
+    status: d.status || 'yaklasiyor',
+    created_at: d.createdAt && d.createdAt.toDate ? d.createdAt.toDate().toISOString() : d.createdAt
+  };
+}
+async function loadAllPeriodicChecks() {
+  try {
+    const snap = await db.collection('periodicChecks').get();
+    state.periodicChecks = snap.docs
+      .map(d => normalizePeriodicCheck(d.id, d.data()))
+      .sort((a, b) => new Date(a.due_date || 0) - new Date(b.due_date || 0));
+  } catch (err) {
+    console.error('Periyodik kontroller alınamadı:', err.message);
+    state.periodicChecks = [];
+  }
+}
+async function loadMyPeriodicChecks(uid) {
+  try {
+    const snap = await db.collection('periodicChecks').where('employeeId', '==', uid).get();
+    state.myPeriodicChecks = snap.docs
+      .map(d => normalizePeriodicCheck(d.id, d.data()))
+      .sort((a, b) => new Date(a.due_date || 0) - new Date(b.due_date || 0));
+  } catch (err) {
+    console.error('Periyodik kontroller alınamadı:', err.message);
+    state.myPeriodicChecks = [];
+  }
+}
 async function callFunction(name, body) {
   const idToken = await fbAuth.currentUser.getIdToken();
   const res = await fetch(`${FUNCTIONS_BASE}/.netlify/functions/${name}`, {
@@ -192,7 +226,9 @@ const state = {
   reportPhotoData: null,
   reportSubmitting: false,
   reportFormError: '',
-  adminReportFilter: 'hepsi'
+  adminReportFilter: 'hepsi',
+  periodicChecks: [],
+  myPeriodicChecks: []
 };
 
 /* =====================================================================
@@ -256,6 +292,50 @@ const STATUS_COLORS = {
   inceleniyor: 'bg-gold-500/10 text-gold-600 dark:text-gold-400',
   kapatildi: 'bg-pine-50 text-pine-700 dark:bg-pine-900/40 dark:text-pine-300'
 };
+
+const CHECK_TYPE_LABELS = {
+  saglik: 'Periyodik Sağlık Kontrolü',
+  revir: 'Revir Kontrolü',
+  hastane: 'Hastane Kontrolü'
+};
+const PERIODIC_STATUS_LABELS = {
+  tamamlandi: 'Tamamlandı',
+  gecikti: 'Gecikti',
+  yaklasiyor: 'Yaklaşıyor',
+  revire_gitmeli: 'Revire Gitmeli',
+  hastaneye_gitmeli: 'Hastaneye Gitmeli',
+  takip_gereken: 'Takip Gereken'
+};
+const PERIODIC_STATUS_COLORS = {
+  tamamlandi: 'bg-pine-50 text-pine-700 dark:bg-pine-900/40 dark:text-pine-300',
+  gecikti: 'bg-brick-500/10 text-brick-600 dark:text-brick-500',
+  yaklasiyor: 'bg-gold-500/10 text-gold-600 dark:text-gold-400',
+  revire_gitmeli: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  hastaneye_gitmeli: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
+  takip_gereken: 'bg-slate-500/10 text-slate-600 dark:text-slate-400'
+};
+const PERIODIC_STATUS_ICONS = {
+  tamamlandi: 'check-circle-2',
+  gecikti: 'x-circle',
+  yaklasiyor: 'alert-triangle',
+  revire_gitmeli: 'heart',
+  hastaneye_gitmeli: 'shield',
+  takip_gereken: 'clock'
+};
+
+function daysFromToday(dateStr) {
+  if (!dateStr) return null;
+  const target = new Date(dateStr + 'T00:00:00');
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return Math.round((target - today) / 86400000);
+}
+function fmtDaysDiff(dateStr) {
+  const d = daysFromToday(dateStr);
+  if (d === null || isNaN(d)) return '';
+  if (d > 0) return `${d} gün kaldı`;
+  if (d < 0) return `${Math.abs(d)} gün gecikti`;
+  return 'Bugün';
+}
 
 function icons() { if (window.lucide) lucide.createIcons(); }
 
@@ -344,7 +424,7 @@ async function render() {
   }
 
   const role = state.profile.role;
-  const adminRoutes = ['#/admin', '#/admin/employees', '#/admin/import', '#/admin/announcements', '#/admin/reports'];
+  const adminRoutes = ['#/admin', '#/admin/employees', '#/admin/import', '#/admin/announcements', '#/admin/reports', '#/admin/periodic-checks'];
 
   if (adminRoutes.includes(route) && role !== 'admin') {
     location.hash = '#/dashboard';
@@ -362,7 +442,7 @@ async function render() {
   if (route === '#/dashboard') {
     title = `Merhaba, ${escapeHtml(state.profile.first_name)} 👋`;
     subtitle = `${escapeHtml(state.profile.department)} · Sicil No: ${escapeHtml(state.profile.registry_number || '—')}`;
-    await loadAnnouncements();
+    await Promise.all([loadAnnouncements(), loadMyPeriodicChecks(state.profile.id)]);
     content = employeeDashboardView();
   } else if (route === '#/admin') {
     title = 'Genel Bakış';
@@ -393,6 +473,11 @@ async function render() {
     await loadAllReports();
     subtitle = `${state.allReports.length} bildirim`;
     content = adminReportsView();
+  } else if (route === '#/admin/periodic-checks') {
+    title = 'Periyodik Kontroller';
+    await Promise.all([loadEmployees(), loadAllPeriodicChecks()]);
+    subtitle = `${state.periodicChecks.length} kayıtlı kontrol`;
+    content = adminPeriodicChecksView();
   } else {
     location.hash = role === 'admin' ? '#/admin' : '#/dashboard';
     return;
@@ -425,7 +510,8 @@ function shell(title, subtitle, content, role, route) {
     { href: '#/admin/employees', label: 'Çalışanlar', icon: 'users' },
     { href: '#/admin/import', label: 'Toplu Ekleme', icon: 'upload-cloud' },
     { href: '#/admin/announcements', label: 'Duyurular', icon: 'megaphone' },
-    { href: '#/admin/reports', label: 'Bildirimler', icon: 'alert-triangle' }
+    { href: '#/admin/reports', label: 'Bildirimler', icon: 'alert-triangle' },
+    { href: '#/admin/periodic-checks', label: 'Periyodik Kontroller', icon: 'stethoscope' }
   ];
   const links = role === 'admin' ? adminLinks : employeeLinks;
   const p = state.profile;
@@ -547,7 +633,7 @@ function loginScreen() {
           </button>
         </form>
         <p class="mt-6 text-center text-xs text-ink-800/45 dark:text-sand-100/40">
-          Hesap bilgileriniz yoksa lütfen Yazıcınız ile iletişime geçin.
+          Hesap bilgileriniz yoksa lütfen İnsan Kaynakları biriminizle iletişime geçin.
         </p>
       </div>
     </div>
@@ -631,6 +717,32 @@ function employeeDashboardView() {
       </div>
     </div>
   </div>
+
+  ${state.myPeriodicChecks.length > 0 ? `
+  <div class="mt-8 card p-6 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">
+    <div class="flex items-center gap-3">
+      <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-pine-50 text-pine-700 dark:bg-pine-900/40 dark:text-pine-300">
+        <i data-lucide="stethoscope" class="w-[18px] h-[18px]"></i>
+      </div>
+      <div>
+        <h2 class="font-display text-base font-semibold text-ink-900 dark:text-sand-50">Periyodik Sağlık Kontrollerim</h2>
+        <p class="text-xs text-ink-800/50 dark:text-sand-100/45">Yönetici tarafından takip edilen kontrol tarihleriniz</p>
+      </div>
+    </div>
+    <div class="mt-4 divide-y divide-black/5 dark:divide-white/5">
+      ${state.myPeriodicChecks.map(c => `
+        <div class="flex flex-wrap items-center justify-between gap-3 py-3">
+          <div class="min-w-0">
+            <p class="text-sm font-medium text-ink-900 dark:text-sand-50">${escapeHtml(CHECK_TYPE_LABELS[c.check_type] || c.check_type)}</p>
+            <p class="text-xs text-ink-800/50 dark:text-sand-100/45">${escapeHtml(c.due_date)}</p>
+          </div>
+          <div class="flex shrink-0 items-center gap-2">
+            <span class="text-xs text-ink-800/55 dark:text-sand-100/50 whitespace-nowrap">${fmtDaysDiff(c.due_date)}</span>
+            <span class="rounded-full px-2.5 py-1 text-[11px] font-medium ${PERIODIC_STATUS_COLORS[c.status]}">${PERIODIC_STATUS_LABELS[c.status]}</span>
+          </div>
+        </div>`).join('')}
+    </div>
+  </div>` : ''}
 
   <div class="mt-8">
     <h2 class="mb-4 font-display text-base font-semibold text-ink-900 dark:text-sand-50">Şirket Duyuruları</h2>
@@ -854,6 +966,110 @@ function adminReportsView() {
   ${filtered.length === 0
     ? `<div class="card p-10 text-center text-sm text-ink-800/50 dark:text-sand-100/45 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">Bu filtrede bildirim yok.</div>`
     : `<div class="space-y-4">${filtered.map(r => reportCard(r, true)).join('')}</div>`}`;
+}
+
+/* =====================================================================
+   ADMIN — PERİYODİK KONTROLLER
+   ===================================================================== */
+function adminPeriodicChecksView() {
+  const checks = state.periodicChecks;
+  const counts = {
+    total: checks.length,
+    tamamlandi: checks.filter(c => c.status === 'tamamlandi').length,
+    yaklasiyor: checks.filter(c => c.status === 'yaklasiyor').length,
+    gecikti: checks.filter(c => c.status === 'gecikti').length,
+    revire_gitmeli: checks.filter(c => c.status === 'revire_gitmeli').length,
+    hastaneye_gitmeli: checks.filter(c => c.status === 'hastaneye_gitmeli').length,
+    takip_gereken: checks.filter(c => c.status === 'takip_gereken').length
+  };
+  const needsAttention = checks.filter(c => c.status !== 'tamamlandi');
+
+  const summaryCard = (icon, label, value, accent) => `
+    <div class="card p-4 text-center bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">
+      <p class="text-xs font-medium text-ink-800/55 dark:text-sand-100/50 flex items-center justify-center gap-1.5">
+        ${label} <i data-lucide="${icon}" class="w-3.5 h-3.5 opacity-70"></i>
+      </p>
+      <p class="mt-2 font-display text-2xl font-bold text-ink-900 dark:text-sand-50">${value}</p>
+    </div>`;
+
+  return `
+  <div class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+    ${summaryCard('clipboard-list', 'Toplam Kontrol', counts.total)}
+    ${summaryCard('check-circle-2', 'Tamamlanan', counts.tamamlandi)}
+    ${summaryCard('alert-triangle', 'Yaklaşan', counts.yaklasiyor)}
+    ${summaryCard('x-circle', 'Geciken', counts.gecikti)}
+    ${summaryCard('heart', 'Revire Gitmesi Gereken', counts.revire_gitmeli)}
+    ${summaryCard('shield', 'Hastaneye Gitmesi Gereken', counts.hastaneye_gitmeli)}
+    ${summaryCard('clock', 'Takip Gereken', counts.takip_gereken)}
+  </div>
+
+  <div class="mb-5 flex justify-end">
+    <button data-action="open-periodic-check-form" class="btn-primary inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium bg-pine-600 text-white hover:bg-pine-700">
+      <i data-lucide="plus" class="w-4 h-4"></i> Yeni Kontrol Ekle
+    </button>
+  </div>
+
+  <div class="card p-6 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">
+    <h2 class="font-display text-base font-semibold text-ink-900 dark:text-sand-50">Dikkat Gereken Periyodik Kontroller</h2>
+    ${needsAttention.length === 0
+      ? `<p class="mt-4 text-sm text-ink-800/50 dark:text-sand-100/45">Dikkat gereken bir kontrol yok.</p>`
+      : `<div class="mt-4 divide-y divide-black/5 dark:divide-white/5">
+          ${needsAttention.map(c => periodicCheckRow(c)).join('')}
+        </div>`}
+  </div>
+
+  <div class="mt-8 card overflow-x-auto bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">
+    <div class="px-6 pt-6"><h2 class="font-display text-base font-semibold text-ink-900 dark:text-sand-50">Tüm Kontroller</h2></div>
+    ${checks.length === 0
+      ? `<p class="p-6 text-sm text-ink-800/50 dark:text-sand-100/45">Henüz kontrol eklenmedi.</p>`
+      : `<table class="mt-4 w-full min-w-[720px] text-left text-sm">
+          <thead><tr class="border-b border-black/5 dark:border-white/5 text-xs text-ink-800/45 dark:text-sand-100/40">
+            <th class="px-6 py-3 font-medium">Çalışan</th>
+            <th class="px-3 py-3 font-medium">Kontrol Türü</th>
+            <th class="px-3 py-3 font-medium">Tarih</th>
+            <th class="px-3 py-3 font-medium">Durum</th>
+            <th class="px-3 py-3 font-medium text-right pr-6">İşlemler</th>
+          </tr></thead>
+          <tbody class="divide-y divide-black/5 dark:divide-white/5">
+            ${checks.map(c => `<tr>
+              <td class="px-6 py-3">
+                <p class="font-medium text-ink-900 dark:text-sand-50">${escapeHtml(c.employee_name)}</p>
+                <p class="text-xs text-ink-800/45 dark:text-sand-100/40">${escapeHtml(c.department || '')}</p>
+              </td>
+              <td class="px-3 py-3 text-ink-800/70 dark:text-sand-100/60">${escapeHtml(CHECK_TYPE_LABELS[c.check_type] || c.check_type)}</td>
+              <td class="px-3 py-3 text-ink-800/70 dark:text-sand-100/60 whitespace-nowrap">${escapeHtml(c.due_date)} <span class="text-xs text-ink-800/40 dark:text-sand-100/35">(${fmtDaysDiff(c.due_date)})</span></td>
+              <td class="px-3 py-3"><span class="rounded-full px-2 py-0.5 text-[11px] font-medium ${PERIODIC_STATUS_COLORS[c.status]}">${PERIODIC_STATUS_LABELS[c.status]}</span></td>
+              <td class="px-3 py-3 pr-6">
+                <div class="flex justify-end gap-1">
+                  <button data-action="edit-periodic-check" data-id="${c.id}" class="flex h-8 w-8 items-center justify-center rounded-lg text-ink-800/50 hover:bg-sand-100 hover:text-pine-700 dark:text-sand-100/50 dark:hover:bg-ink-700" aria-label="Düzenle">
+                    <i data-lucide="pencil" class="w-[15px] h-[15px]"></i>
+                  </button>
+                  <button data-action="delete-periodic-check" data-id="${c.id}" class="flex h-8 w-8 items-center justify-center rounded-lg text-ink-800/50 hover:bg-brick-500/10 hover:text-brick-600 dark:text-sand-100/50" aria-label="Sil">
+                    <i data-lucide="trash-2" class="w-[15px] h-[15px]"></i>
+                  </button>
+                </div>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`}
+  </div>`;
+}
+
+function periodicCheckRow(c) {
+  return `
+  <div class="flex flex-wrap items-center justify-between gap-3 py-3.5">
+    <div class="min-w-0">
+      <p class="font-medium text-ink-900 dark:text-sand-50">${escapeHtml(c.employee_name)} <span class="font-normal text-ink-800/45 dark:text-sand-100/40">· ${escapeHtml(c.department || '')}</span></p>
+      <p class="text-xs text-ink-800/50 dark:text-sand-100/45">${escapeHtml(CHECK_TYPE_LABELS[c.check_type] || c.check_type)} · ${escapeHtml(c.due_date)}</p>
+    </div>
+    <div class="flex shrink-0 items-center gap-2">
+      <span class="text-xs text-ink-800/55 dark:text-sand-100/50 whitespace-nowrap">${fmtDaysDiff(c.due_date)}</span>
+      <span class="flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium ${PERIODIC_STATUS_COLORS[c.status]}">
+        <i data-lucide="${PERIODIC_STATUS_ICONS[c.status]}" class="w-3 h-3"></i>
+        ${PERIODIC_STATUS_LABELS[c.status]}
+      </span>
+    </div>
+  </div>`;
 }
 
 /* =====================================================================
@@ -1135,6 +1351,7 @@ function modalHtml() {
   if (!state.modal) return '';
   if (state.modal.type === 'employee') return employeeModal(state.modal.data);
   if (state.modal.type === 'announcement') return announcementModal(state.modal.data);
+  if (state.modal.type === 'periodic-check') return periodicCheckModal(state.modal.data);
   return '';
 }
 
@@ -1155,6 +1372,11 @@ function employeeModal(emp) {
         </div>
         <div><label class="label">Sicil No</label><input name="registry_number" type="text" required class="input" placeholder="Örn. 1024" /></div>
         <div><label class="label">Şifre (siz belirleyin)</label><input name="password" type="text" minlength="6" required class="input" placeholder="En az 6 karakter" /></div>
+        <label class="flex items-center gap-2.5 rounded-lg border border-dashed border-black/10 dark:border-white/10 p-3.5">
+          <input type="checkbox" name="is_admin" id="is-admin-checkbox" class="h-4 w-4 rounded border-black/20 text-pine-600 focus:ring-pine-500" />
+          <span class="text-sm text-ink-800 dark:text-sand-100">Bu kişiyi <strong>Yönetici (Admin)</strong> yetkisiyle ekle</span>
+        </label>
+        <p class="text-xs text-ink-800/45 dark:text-sand-100/40 -mt-2">Yönetici olarak eklenen kişiler, çalışan listesinde görünmez; onlar da bu panele Sicil No + şifreleriyle admin yetkisiyle giriş yapabilir.</p>
         ` : ''}
         <div>
           <label class="label">Departman</label>
@@ -1219,6 +1441,57 @@ function announcementModal(ann) {
         <div class="flex justify-end gap-3 pt-2">
           <button type="button" data-action="close-modal" class="btn-secondary inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium bg-sand-100 text-ink-800 hover:bg-sand-200 dark:bg-ink-700 dark:text-sand-100">Vazgeç</button>
           <button type="submit" id="announcement-form-submit" class="btn-primary inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium bg-pine-600 text-white hover:bg-pine-700">Kaydet</button>
+        </div>
+      </form>
+    </div>
+  </div>`;
+}
+
+function periodicCheckModal(check) {
+  const isEdit = Boolean(check);
+  const knownTypes = ['saglik', 'revir', 'hastane'];
+  const isOtherType = isEdit && check.check_type && !knownTypes.includes(check.check_type);
+  const employees = state.employees;
+
+  return `
+  <div class="fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4" data-action="modal-backdrop">
+    <div class="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl2 bg-white dark:bg-ink-800 shadow-soft" data-stop-close>
+      <div class="flex items-center justify-between border-b border-black/5 dark:border-white/5 px-6 py-4">
+        <h2 class="font-display text-lg font-semibold text-ink-900 dark:text-sand-50">${isEdit ? 'Kontrolü Düzenle' : 'Yeni Periyodik Kontrol'}</h2>
+        <button data-action="close-modal" class="text-ink-800/50 dark:text-sand-100/50"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+      <form id="periodic-check-form" data-id="${isEdit ? check.id : ''}" class="space-y-4 px-6 py-5">
+        <div>
+          <label class="label">Çalışan</label>
+          <select name="employee_id" required class="input">
+            <option value="">Seçin…</option>
+            ${employees.map(e => `<option value="${e.id}" ${isEdit && check.employee_id === e.id ? 'selected' : ''}>${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)} — ${escapeHtml(e.department)}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="label">Kontrol Türü</label>
+          <select name="check_type_select" id="check-type-select" class="input">
+            <option value="saglik" ${isEdit && check.check_type === 'saglik' ? 'selected' : ''}>Periyodik Sağlık Kontrolü</option>
+            <option value="revir" ${isEdit && check.check_type === 'revir' ? 'selected' : ''}>Revir Kontrolü</option>
+            <option value="hastane" ${isEdit && check.check_type === 'hastane' ? 'selected' : ''}>Hastane Kontrolü</option>
+            <option value="__other__" ${isOtherType ? 'selected' : ''}>Diğer (yazın)</option>
+          </select>
+          <input name="check_type_other" id="check-type-other" class="input mt-2 ${isOtherType ? '' : 'hidden'}" placeholder="Kontrol türünü yazın" value="${isOtherType ? escapeHtml(check.check_type) : ''}" />
+        </div>
+        <div>
+          <label class="label">Tarih</label>
+          <input name="due_date" type="date" required class="input" value="${isEdit ? check.due_date : new Date().toISOString().slice(0, 10)}" />
+        </div>
+        <div>
+          <label class="label">Durum</label>
+          <select name="status" required class="input">
+            ${Object.entries(PERIODIC_STATUS_LABELS).map(([val, label]) => `<option value="${val}" ${isEdit && check.status === val ? 'selected' : (!isEdit && val === 'yaklasiyor' ? 'selected' : '')}>${label}</option>`).join('')}
+          </select>
+        </div>
+        <div id="periodic-check-form-error"></div>
+        <div class="flex justify-end gap-3 pt-2">
+          <button type="button" data-action="close-modal" class="btn-secondary inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium bg-sand-100 text-ink-800 hover:bg-sand-200 dark:bg-ink-700 dark:text-sand-100">Vazgeç</button>
+          <button type="submit" id="periodic-check-form-submit" class="btn-primary inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium bg-pine-600 text-white hover:bg-pine-700">${isEdit ? 'Değişiklikleri Kaydet' : 'Kontrolü Ekle'}</button>
         </div>
       </form>
     </div>
@@ -1300,6 +1573,23 @@ document.addEventListener('click', async (e) => {
       state.adminReportFilter = el.dataset.value;
       render();
       break;
+    case 'open-periodic-check-form':
+      state.modal = { type: 'periodic-check', data: null };
+      render();
+      break;
+    case 'edit-periodic-check': {
+      const check = state.periodicChecks.find(x => x.id === el.dataset.id);
+      state.modal = { type: 'periodic-check', data: check };
+      render();
+      break;
+    }
+    case 'delete-periodic-check': {
+      if (confirm('Bu periyodik kontrolü silmek istediğinize emin misiniz?')) {
+        await db.collection('periodicChecks').doc(el.dataset.id).delete();
+        await loadAllPeriodicChecks(); render();
+      }
+      break;
+    }
   }
 });
 
@@ -1312,6 +1602,17 @@ document.addEventListener('change', async (e) => {
   }
   if (e.target.id === 'department-select') {
     const other = document.getElementById('department-other');
+    if (other) {
+      if (e.target.value === '__other__') {
+        other.classList.remove('hidden');
+        other.focus();
+      } else {
+        other.classList.add('hidden');
+      }
+    }
+  }
+  if (e.target.id === 'check-type-select') {
+    const other = document.getElementById('check-type-other');
     if (other) {
       if (e.target.value === '__other__') {
         other.classList.remove('hidden');
@@ -1448,6 +1749,7 @@ document.addEventListener('submit', async (e) => {
           first_name: fd.get('first_name'),
           last_name: fd.get('last_name'),
           department,
+          role: fd.get('is_admin') ? 'admin' : 'employee',
           annual_leave_total: Number(fd.get('annual_leave_total')),
           flexible_hours_start: fd.get('flexible_hours_start'),
           flexible_hours_end: fd.get('flexible_hours_end'),
@@ -1503,6 +1805,53 @@ document.addEventListener('submit', async (e) => {
       document.getElementById('announcement-form-error').innerHTML =
         `<p class="rounded-lg bg-brick-500/10 px-3.5 py-2.5 text-sm text-brick-600">Kaydedilirken bir hata oluştu.</p>`;
       btn.disabled = false; btn.textContent = 'Kaydet';
+    }
+    return;
+  }
+
+  if (e.target.id === 'periodic-check-form') {
+    e.preventDefault();
+    const form = e.target;
+    const id = form.dataset.id;
+    const fd = new FormData(form);
+    const btn = document.getElementById('periodic-check-form-submit');
+    const errBox = document.getElementById('periodic-check-form-error');
+    errBox.innerHTML = '';
+    btn.disabled = true; btn.textContent = 'Kaydediliyor…';
+
+    try {
+      const employeeId = fd.get('employee_id');
+      if (!employeeId) throw new Error('Lütfen bir çalışan seçin.');
+      const emp = state.employees.find(x => x.id === employeeId);
+      if (!emp) throw new Error('Seçilen çalışan bulunamadı.');
+
+      const typeSelect = fd.get('check_type_select');
+      const checkType = typeSelect === '__other__' ? (fd.get('check_type_other') || '').trim() : typeSelect;
+      if (!checkType) throw new Error('Lütfen bir kontrol türü seçin veya "Diğer" için isim yazın.');
+
+      const payload = {
+        employeeId,
+        employeeName: `${emp.first_name} ${emp.last_name}`,
+        department: emp.department,
+        checkType,
+        dueDate: fd.get('due_date'),
+        status: fd.get('status')
+      };
+
+      if (id) {
+        await db.collection('periodicChecks').doc(id).update(payload);
+      } else {
+        await db.collection('periodicChecks').add({
+          ...payload,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
+      state.modal = null;
+      await loadAllPeriodicChecks();
+      render();
+    } catch (err) {
+      errBox.innerHTML = `<p class="rounded-lg bg-brick-500/10 px-3.5 py-2.5 text-sm text-brick-600">${escapeHtml(err.message || 'Bir hata oluştu.')}</p>`;
+      btn.disabled = false; btn.textContent = id ? 'Değişiklikleri Kaydet' : 'Kontrolü Ekle';
     }
   }
 });

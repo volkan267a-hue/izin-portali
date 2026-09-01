@@ -72,20 +72,13 @@
    AYARLAR — Firebase proje bilgilerinizi buraya girin
    (Firebase Console > Project Settings > General > Your apps > Web app > SDK setup and configuration)
    ===================================================================== */
- const firebaseConfig = {
-
+const firebaseConfig = {
   apiKey: "AIzaSyADpucVQrCF3C0GF1RgWY0pAbaxiMxjl9E",
-
   authDomain: "izin-portali.firebaseapp.com",
-
   projectId: "izin-portali",
-
   storageBucket: "izin-portali.firebasestorage.app",
-
   messagingSenderId: "1073816187669",
-
   appId: "1:1073816187669:web:40a73a49133f5f1caeef1c"
-
 };
 
 
@@ -127,6 +120,44 @@ function normalizeAnnouncement(id, d) {
     published_at: d.publishedAt && d.publishedAt.toDate ? d.publishedAt.toDate().toISOString() : d.publishedAt
   };
 }
+function normalizeReport(id, d) {
+  return {
+    id,
+    type: d.type,
+    risk_level: d.riskLevel,
+    description: d.description,
+    date: d.date,
+    shift: d.shift,
+    department: d.department,
+    photo: d.photo || null,
+    status: d.status || 'yeni',
+    submitted_by: d.submittedBy,
+    submitter_name: d.submitterName,
+    created_at: d.createdAt && d.createdAt.toDate ? d.createdAt.toDate().toISOString() : d.createdAt
+  };
+}
+async function loadMyReports(uid) {
+  try {
+    const snap = await db.collection('reports').where('submittedBy', '==', uid).get();
+    state.myReports = snap.docs
+      .map(d => normalizeReport(d.id, d.data()))
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  } catch (err) {
+    console.error('Bildirimler alınamadı:', err.message);
+    state.myReports = [];
+  }
+}
+async function loadAllReports() {
+  try {
+    const snap = await db.collection('reports').get();
+    state.allReports = snap.docs
+      .map(d => normalizeReport(d.id, d.data()))
+      .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  } catch (err) {
+    console.error('Bildirimler alınamadı:', err.message);
+    state.allReports = [];
+  }
+}
 async function callFunction(name, body) {
   const idToken = await fbAuth.currentUser.getIdToken();
   const res = await fetch(`${FUNCTIONS_BASE}/.netlify/functions/${name}`, {
@@ -154,6 +185,12 @@ const state = {
   bulkResults: null,
   bulkImporting: false,
   modal: null, // { type: 'employee'|'announcement', data: {...} | null }
+  myReports: [],
+  allReports: [],
+  reportPhotoData: null,
+  reportSubmitting: false,
+  reportFormError: '',
+  adminReportFilter: 'hepsi'
 };
 
 /* =====================================================================
@@ -179,6 +216,44 @@ function fmtHours(n) {
   const str = num.toLocaleString('tr-TR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   return `${str} saat`;
 }
+
+// Bir fotoğraf dosyasını tarayıcıda küçültüp base64'e çevirir (Firestore belge
+// boyutu sınırı 1MB olduğu için; ayrıca ücretli Storage aboneliği gerekmez).
+function compressImageToBase64(file, maxWidth = 900, quality = 0.6) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+const REPORT_TYPE_LABELS = { oneri: 'Öneri', ramak_kala: 'Ramak Kala' };
+const RISK_LABELS = { dusuk: 'Düşük', orta: 'Orta', yuksek: 'Yüksek' };
+const RISK_COLORS = {
+  dusuk: 'bg-pine-50 text-pine-700 dark:bg-pine-900/40 dark:text-pine-300',
+  orta: 'bg-gold-500/10 text-gold-600 dark:text-gold-400',
+  yuksek: 'bg-brick-500/10 text-brick-600 dark:text-brick-500'
+};
+const STATUS_LABELS = { yeni: 'Yeni', inceleniyor: 'İnceleniyor', kapatildi: 'Kapatıldı' };
+const STATUS_COLORS = {
+  yeni: 'bg-brick-500/10 text-brick-600 dark:text-brick-500',
+  inceleniyor: 'bg-gold-500/10 text-gold-600 dark:text-gold-400',
+  kapatildi: 'bg-pine-50 text-pine-700 dark:bg-pine-900/40 dark:text-pine-300'
+};
 
 function icons() { if (window.lucide) lucide.createIcons(); }
 
@@ -267,7 +342,7 @@ async function render() {
   }
 
   const role = state.profile.role;
-  const adminRoutes = ['#/admin', '#/admin/employees', '#/admin/import', '#/admin/announcements'];
+  const adminRoutes = ['#/admin', '#/admin/employees', '#/admin/import', '#/admin/announcements', '#/admin/reports'];
 
   if (adminRoutes.includes(route) && role !== 'admin') {
     location.hash = '#/dashboard';
@@ -301,11 +376,21 @@ async function render() {
     title = 'Toplu Ekleme';
     subtitle = 'Excel veya CSV dosyasından çalışan aktarın';
     content = adminImportView();
+  } else if (route === '#/report') {
+    title = 'Öneri / Ramak Kala Bildir';
+    subtitle = 'Bir öneriniz veya ramak kala olayınız mı var?';
+    await loadMyReports(state.profile.id);
+    content = employeeReportView();
   } else if (route === '#/admin/announcements') {
     title = 'Duyurular';
     await loadAnnouncements();
     subtitle = `${state.announcements.length} duyuru yayında`;
     content = adminAnnouncementsView();
+  } else if (route === '#/admin/reports') {
+    title = 'Bildirimler';
+    await loadAllReports();
+    subtitle = `${state.allReports.length} bildirim`;
+    content = adminReportsView();
   } else {
     location.hash = role === 'admin' ? '#/admin' : '#/dashboard';
     return;
@@ -329,12 +414,16 @@ function loadingScreen(msg) {
    KABUK (Sidebar + Topbar + içerik)
    ===================================================================== */
 function shell(title, subtitle, content, role, route) {
-  const employeeLinks = [{ href: '#/dashboard', label: 'Panelim', icon: 'layout-dashboard' }];
+  const employeeLinks = [
+    { href: '#/dashboard', label: 'Panelim', icon: 'layout-dashboard' },
+    { href: '#/report', label: 'Öneri / Ramak Kala', icon: 'alert-triangle' }
+  ];
   const adminLinks = [
     { href: '#/admin', label: 'Genel Bakış', icon: 'layout-dashboard' },
     { href: '#/admin/employees', label: 'Çalışanlar', icon: 'users' },
     { href: '#/admin/import', label: 'Toplu Ekleme', icon: 'upload-cloud' },
-    { href: '#/admin/announcements', label: 'Duyurular', icon: 'megaphone' }
+    { href: '#/admin/announcements', label: 'Duyurular', icon: 'megaphone' },
+    { href: '#/admin/reports', label: 'Bildirimler', icon: 'alert-triangle' }
   ];
   const links = role === 'admin' ? adminLinks : employeeLinks;
   const p = state.profile;
@@ -606,6 +695,163 @@ function announcementCard(a, editable) {
     </div>
     <p class="mt-3 whitespace-pre-line text-sm leading-relaxed text-ink-800/80 dark:text-sand-100/75">${escapeHtml(a.content)}</p>
   </article>`;
+}
+
+/* =====================================================================
+   ÇALIŞAN — ÖNERİ / RAMAK KALA BİLDİRİMİ
+   ===================================================================== */
+function employeeReportView() {
+  const p = state.profile;
+  const myReports = state.myReports;
+
+  return `
+  <div class="grid gap-5 lg:grid-cols-3">
+    <div class="card p-6 lg:col-span-2 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">
+      <h2 class="font-display text-base font-semibold text-ink-900 dark:text-sand-50">Yeni Bildirim</h2>
+      <p class="mt-1 text-xs text-ink-800/50 dark:text-sand-100/45">Bir öneriniz veya fark ettiğiniz bir ramak kala (near-miss) olayı varsa bildirin.</p>
+
+      <form id="report-form" class="mt-5 space-y-4">
+        <div>
+          <label class="label">Bildirim Türü</label>
+          <select name="type" required class="input">
+            <option value="oneri">Öneri</option>
+            <option value="ramak_kala">Ramak Kala</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="label">Risk Seviyesi</label>
+            <select name="risk_level" required class="input">
+              <option value="dusuk">Düşük</option>
+              <option value="orta" selected>Orta</option>
+              <option value="yuksek">Yüksek</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Tarih</label>
+            <input name="date" type="date" required class="input" value="${new Date().toISOString().slice(0, 10)}" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="label">Vardiya</label>
+            <select name="shift" required class="input">
+              <option value="Sabah">Sabah</option>
+              <option value="Akşam">Akşam</option>
+              <option value="Gece">Gece</option>
+              <option value="Diğer">Diğer</option>
+            </select>
+          </div>
+          <div>
+            <label class="label">Bölüm / Kısım</label>
+            <input name="department" required class="input" value="${escapeHtml(p.department || '')}" />
+          </div>
+        </div>
+
+        <div>
+          <label class="label">Açıklama</label>
+          <textarea name="description" required rows="4" class="input resize-none" placeholder="Ne oldu, nerede oldu, neden risk oluşturuyor?"></textarea>
+        </div>
+
+        <div>
+          <label class="label">Fotoğraf (opsiyonel)</label>
+          <input id="report-photo-input" type="file" accept="image/*" capture="environment" class="input" />
+          <div id="report-photo-preview">${state.reportPhotoData
+            ? `<img src="${state.reportPhotoData}" class="mt-2 max-h-40 rounded-lg border border-black/10 dark:border-white/10" />`
+            : ''}</div>
+        </div>
+
+        ${state.reportFormError ? `<p class="rounded-lg bg-brick-500/10 px-3.5 py-2.5 text-sm text-brick-600">${escapeHtml(state.reportFormError)}</p>` : ''}
+
+        <button type="submit" ${state.reportSubmitting ? 'disabled' : ''} class="btn-primary w-full inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium bg-pine-600 text-white hover:bg-pine-700 disabled:opacity-50">
+          ${state.reportSubmitting ? 'Gönderiliyor…' : 'Bildirimi Gönder'}
+        </button>
+      </form>
+    </div>
+
+    <div class="card p-6 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">
+      <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-gold-500/10 text-gold-600 dark:text-gold-400">
+        <i data-lucide="info" class="w-[18px] h-[18px]"></i>
+      </div>
+      <h3 class="mt-3 font-display text-sm font-semibold text-ink-900 dark:text-sand-50">Neden önemli?</h3>
+      <p class="mt-2 text-xs leading-relaxed text-ink-800/60 dark:text-sand-100/50">
+        Ramak kala bildirimleri, henüz bir kazaya dönüşmemiş riskli durumları erken tespit etmemizi sağlar.
+        Önerileriniz de çalışma ortamını iyileştirmemize yardımcı olur. Bildiriminiz sadece yöneticiler tarafından görüntülenir.
+      </p>
+    </div>
+  </div>
+
+  <div class="mt-8">
+    <h2 class="mb-4 font-display text-base font-semibold text-ink-900 dark:text-sand-50">Bildirimlerim</h2>
+    ${myReports.length === 0
+      ? `<div class="card p-8 text-center text-sm text-ink-800/50 dark:text-sand-100/45 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">Henüz bir bildiriminiz yok.</div>`
+      : `<div class="space-y-4">${myReports.map(r => reportCard(r, false)).join('')}</div>`}
+  </div>`;
+}
+
+function reportCard(r, forAdmin) {
+  return `
+  <article class="card p-5 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="flex items-start gap-3 min-w-0">
+        <div class="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${RISK_COLORS[r.risk_level] || RISK_COLORS.orta}">
+          <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+        </div>
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2">
+            <h3 class="font-display text-base font-semibold text-ink-900 dark:text-sand-50">${REPORT_TYPE_LABELS[r.type] || r.type}</h3>
+            <span class="rounded-full px-2 py-0.5 text-[11px] font-medium ${RISK_COLORS[r.risk_level] || RISK_COLORS.orta}">Risk: ${RISK_LABELS[r.risk_level] || r.risk_level}</span>
+            <span class="rounded-full px-2 py-0.5 text-[11px] font-medium ${STATUS_COLORS[r.status] || STATUS_COLORS.yeni}">${STATUS_LABELS[r.status] || r.status}</span>
+          </div>
+          <p class="mt-0.5 text-xs text-ink-800/50 dark:text-sand-100/45">
+            ${escapeHtml(r.date || '')} · ${escapeHtml(r.shift || '')} · ${escapeHtml(r.department || '')}
+            ${forAdmin && r.submitter_name ? ` · ${escapeHtml(r.submitter_name)}` : ''}
+          </p>
+        </div>
+      </div>
+      ${forAdmin ? `
+      <div class="flex shrink-0 items-center gap-2">
+        <select data-action="change-report-status" data-id="${r.id}" class="rounded-lg border border-black/10 dark:border-white/10 bg-white dark:bg-ink-900 px-2.5 py-1.5 text-xs">
+          <option value="yeni" ${r.status === 'yeni' ? 'selected' : ''}>Yeni</option>
+          <option value="inceleniyor" ${r.status === 'inceleniyor' ? 'selected' : ''}>İnceleniyor</option>
+          <option value="kapatildi" ${r.status === 'kapatildi' ? 'selected' : ''}>Kapatıldı</option>
+        </select>
+        <button data-action="delete-report" data-id="${r.id}" class="flex h-8 w-8 items-center justify-center rounded-lg text-ink-800/50 hover:bg-brick-500/10 hover:text-brick-600 dark:text-sand-100/50" aria-label="Sil">
+          <i data-lucide="trash-2" class="w-[15px] h-[15px]"></i>
+        </button>
+      </div>` : ''}
+    </div>
+    <p class="mt-3 whitespace-pre-line text-sm leading-relaxed text-ink-800/80 dark:text-sand-100/75">${escapeHtml(r.description)}</p>
+    ${r.photo ? `<img src="${r.photo}" class="mt-3 max-h-56 rounded-lg border border-black/10 dark:border-white/10" />` : ''}
+  </article>`;
+}
+
+/* =====================================================================
+   ADMIN — BİLDİRİMLER
+   ===================================================================== */
+function adminReportsView() {
+  const filter = state.adminReportFilter;
+  const filtered = filter === 'hepsi' ? state.allReports : state.allReports.filter(r => r.type === filter);
+
+  const filterBtn = (value, label) => `
+    <button data-action="filter-reports" data-value="${value}"
+      class="rounded-lg px-3.5 py-2 text-xs font-medium transition-colors ${
+        filter === value
+          ? 'bg-pine-600 text-white'
+          : 'bg-sand-100 text-ink-800 hover:bg-sand-200 dark:bg-ink-700 dark:text-sand-100'
+      }">${label}</button>`;
+
+  return `
+  <div class="mb-5 flex flex-wrap gap-2">
+    ${filterBtn('hepsi', 'Hepsi')}
+    ${filterBtn('oneri', 'Öneriler')}
+    ${filterBtn('ramak_kala', 'Ramak Kala')}
+  </div>
+  ${filtered.length === 0
+    ? `<div class="card p-10 text-center text-sm text-ink-800/50 dark:text-sand-100/45 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">Bu filtrede bildirim yok.</div>`
+    : `<div class="space-y-4">${filtered.map(r => reportCard(r, true)).join('')}</div>`}`;
 }
 
 /* =====================================================================
@@ -898,6 +1144,13 @@ function employeeModal(emp) {
           <div><label class="label">Saat Bakiyesi (borç/alacak, örn. -7,5)</label><input name="flex_time_balance" type="number" step="0.5" class="input" value="${isEdit ? (emp.flex_time_balance ?? 0) : 0}" /></div>
           <div><label class="label">Kesilen Saat Bakiyesi</label><input name="deducted_hours_balance" type="number" step="0.5" class="input" value="${isEdit ? (emp.deducted_hours_balance ?? 0) : 0}" /></div>
         </div>
+        ${isEdit ? `
+        <div class="rounded-lg border border-dashed border-black/10 dark:border-white/10 p-4">
+          <label class="label">Yeni Şifre Belirle (opsiyonel)</label>
+          <input name="new_password" type="text" minlength="6" class="input" placeholder="Değiştirmek istemiyorsanız boş bırakın" />
+          <p class="mt-1.5 text-xs text-ink-800/45 dark:text-sand-100/40">Doldurursanız çalışanın şifresi anında bu değere güncellenir. En az 6 karakter.</p>
+        </div>
+        ` : ''}
         <div id="employee-form-error"></div>
         <div class="flex justify-end gap-3 pt-2">
           <button type="button" data-action="close-modal" class="btn-secondary inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium bg-sand-100 text-ink-800 hover:bg-sand-200 dark:bg-ink-700 dark:text-sand-100">Vazgeç</button>
@@ -1001,6 +1254,26 @@ document.addEventListener('click', async (e) => {
       state.bulkRows = state.bulkRows.filter((_, idx) => idx !== Number(el.dataset.index));
       render();
       break;
+    case 'delete-report': {
+      if (confirm('Bu bildirimi silmek istediğinize emin misiniz?')) {
+        await db.collection('reports').doc(el.dataset.id).delete();
+        await loadAllReports(); render();
+      }
+      break;
+    }
+    case 'filter-reports':
+      state.adminReportFilter = el.dataset.value;
+      render();
+      break;
+  }
+});
+
+document.addEventListener('change', async (e) => {
+  if (e.target.dataset.action === 'change-report-status') {
+    const id = e.target.dataset.id;
+    const status = e.target.value;
+    await db.collection('reports').doc(id).update({ status });
+    await loadAllReports(); render();
   }
 });
 
@@ -1051,6 +1324,41 @@ document.addEventListener('submit', async (e) => {
     return;
   }
 
+  if (e.target.id === 'report-form') {
+    e.preventDefault();
+    const form = e.target;
+    const fd = new FormData(form);
+    state.reportFormError = '';
+    state.reportSubmitting = true;
+    const submitBtn = form.querySelector('button[type="submit"]');
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Gönderiliyor…'; }
+
+    try {
+      await db.collection('reports').add({
+        type: fd.get('type'),
+        riskLevel: fd.get('risk_level'),
+        description: fd.get('description'),
+        date: fd.get('date'),
+        shift: fd.get('shift'),
+        department: fd.get('department'),
+        photo: state.reportPhotoData || null,
+        status: 'yeni',
+        submittedBy: state.profile.id,
+        submitterName: `${state.profile.first_name} ${state.profile.last_name}`,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      state.reportPhotoData = null;
+      state.reportSubmitting = false;
+      await loadMyReports(state.profile.id);
+      render();
+    } catch (err) {
+      state.reportFormError = err.message || 'Bildirim gönderilirken bir hata oluştu.';
+      state.reportSubmitting = false;
+      render();
+    }
+    return;
+  }
+
   if (e.target.id === 'employee-form') {
     e.preventDefault();
     const form = e.target;
@@ -1073,6 +1381,14 @@ document.addEventListener('submit', async (e) => {
           flexTimeBalance: Number(fd.get('flex_time_balance')) || 0,
           deductedHoursBalance: Number(fd.get('deducted_hours_balance')) || 0
         });
+
+        const newPassword = fd.get('new_password');
+        if (newPassword && newPassword.trim().length > 0) {
+          if (newPassword.trim().length < 6) {
+            throw new Error('Yeni şifre en az 6 karakter olmalı.');
+          }
+          await callFunction('change-password', { uid: id, new_password: newPassword.trim() });
+        }
       } else {
         await callFunction('create-employee', {
           registry_number: fd.get('registry_number'),
@@ -1150,6 +1466,18 @@ document.addEventListener('change', (e) => {
   if (e.target.id === 'bulk-file-input') {
     const file = e.target.files?.[0];
     if (file) parseBulkFile(file);
+  }
+  if (e.target.id === 'report-photo-input') {
+    const file = e.target.files?.[0];
+    if (file) {
+      compressImageToBase64(file).then(dataUrl => {
+        state.reportPhotoData = dataUrl;
+        const preview = document.getElementById('report-photo-preview');
+        if (preview) {
+          preview.innerHTML = `<img src="${dataUrl}" class="mt-2 max-h-40 rounded-lg border border-black/10 dark:border-white/10" />`;
+        }
+      });
+    }
   }
 });
 document.addEventListener('dragover', (e) => {

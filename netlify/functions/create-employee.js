@@ -26,7 +26,9 @@ exports.handler = async (event) => {
       annual_leave_total,
       flexible_hours_start,
       flexible_hours_end,
-      flexible_work_note
+      flexible_work_note,
+      flex_time_balance,
+      deducted_hours_balance
     } = body;
 
     if (!registry_number || !password || !first_name || !last_name) {
@@ -68,6 +70,8 @@ exports.handler = async (event) => {
       flexibleHoursStart: flexible_hours_start || '09:00',
       flexibleHoursEnd: flexible_hours_end || '18:00',
       flexibleWorkNote: flexible_work_note || 'Standart mesai',
+      flexTimeBalance: flex_time_balance ?? 0,
+      deductedHoursBalance: deducted_hours_balance ?? 0,
       createdAt: admin.firestore.FieldValue.serverTimestamp()
     };
 

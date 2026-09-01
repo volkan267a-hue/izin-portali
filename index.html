@@ -73,12 +73,14 @@
    (Firebase Console > Project Settings > General > Your apps > Web app > SDK setup and configuration)
    ===================================================================== */
 const firebaseConfig = {
+
   apiKey: "AIzaSyADpucVQrCF3C0GF1RgWY0pAbaxiMxjl9E",
   authDomain: "izin-portali.firebaseapp.com",
   projectId: "izin-portali",
   storageBucket: "izin-portali.firebasestorage.app",
   messagingSenderId: "1073816187669",
   appId: "1:1073816187669:web:40a73a49133f5f1caeef1c"
+
 };
 
 
@@ -865,10 +867,20 @@ function adminDashboardView() {
     : 0;
   const departments = new Set(employees.map(e => e.department)).size;
 
-  const rows = employees.slice(0, 5).map(e => `
+  const deptCounts = {};
+  employees.forEach(e => {
+    const d = e.department || 'Belirtilmemiş';
+    deptCounts[d] = (deptCounts[d] || 0) + 1;
+  });
+  const deptEntries = Object.entries(deptCounts).sort((a, b) => b[1] - a[1]);
+  const deptAccentOrder = ['pine', 'gold', 'brick'];
+
+  const rows = employees.map(e => `
     <tr>
-      <td class="py-3 font-medium text-ink-900 dark:text-sand-50">${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}</td>
-      <td class="py-3 text-ink-800/70 dark:text-sand-100/60">${escapeHtml(e.department)}</td>
+      <td class="py-3 pr-3 font-medium text-ink-900 dark:text-sand-50">${escapeHtml(e.first_name)} ${escapeHtml(e.last_name)}</td>
+      <td class="py-3 pr-3 text-ink-800/70 dark:text-sand-100/60">${escapeHtml(e.department)}</td>
+      <td class="py-3 pr-3 text-ink-800/70 dark:text-sand-100/60 whitespace-nowrap">${timeShort(e.flexible_hours_start)} – ${timeShort(e.flexible_hours_end)}</td>
+      <td class="py-3 pr-3 text-ink-800/70 dark:text-sand-100/60 whitespace-nowrap">${Math.max(e.annual_leave_total - e.annual_leave_used, 0)} / ${e.annual_leave_total} gün</td>
       <td class="py-3">${leaveBar(e.annual_leave_total, e.annual_leave_used, true)}</td>
     </tr>`).join('');
 
@@ -880,19 +892,33 @@ function adminDashboardView() {
     ${statCard('trending-up', 'Departman Sayısı', departments, '', 'pine')}
   </div>
 
+  ${deptEntries.length > 0 ? `
+  <div class="mt-8">
+    <h2 class="mb-4 font-display text-base font-semibold text-ink-900 dark:text-sand-50">Departmanlara Göre Çalışan Sayısı</h2>
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      ${deptEntries.map(([name, count], i) =>
+        statCard('users', name, count, `toplam ${total} çalışanın ${Math.round((count / total) * 100)}%'i`, deptAccentOrder[i % 3])
+      ).join('')}
+    </div>
+  </div>` : ''}
+
   <div class="mt-8 card p-6 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">
     <div class="flex items-center justify-between">
-      <h2 class="font-display text-base font-semibold text-ink-900 dark:text-sand-50">Son Eklenen Çalışanlar</h2>
+      <h2 class="font-display text-base font-semibold text-ink-900 dark:text-sand-50">Çalışanlar — İzin ve Esnek Saat Durumu</h2>
       <a href="#/admin/employees" class="flex items-center gap-1 text-sm font-medium text-pine-700 dark:text-gold-400 hover:underline">
-        Tümünü gör <i data-lucide="arrow-right" class="w-[14px] h-[14px]"></i>
+        Tümünü Yönet <i data-lucide="arrow-right" class="w-[14px] h-[14px]"></i>
       </a>
     </div>
     ${employees.length === 0
       ? `<p class="mt-6 text-sm text-ink-800/50 dark:text-sand-100/45">Henüz çalışan eklenmedi. "Çalışanlar" sayfasından ekleyebilirsiniz.</p>`
-      : `<div class="mt-5 overflow-x-auto">
-          <table class="w-full text-left text-sm">
-            <thead><tr class="text-xs text-ink-800/45 dark:text-sand-100/40">
-              <th class="pb-3 font-medium">Ad Soyad</th><th class="pb-3 font-medium">Departman</th><th class="pb-3 font-medium">İzin Kullanımı</th>
+      : `<div class="mt-5 max-h-[420px] overflow-auto">
+          <table class="w-full min-w-[640px] text-left text-sm">
+            <thead class="sticky top-0 bg-white dark:bg-ink-800"><tr class="text-xs text-ink-800/45 dark:text-sand-100/40">
+              <th class="pb-3 pr-3 font-medium">Ad Soyad</th>
+              <th class="pb-3 pr-3 font-medium">Departman</th>
+              <th class="pb-3 pr-3 font-medium">Esnek Saat</th>
+              <th class="pb-3 pr-3 font-medium">Kalan / Toplam İzin</th>
+              <th class="pb-3 font-medium">Kullanım</th>
             </tr></thead>
             <tbody class="divide-y divide-black/5 dark:divide-white/5">${rows}</tbody>
           </table>
@@ -1130,7 +1156,16 @@ function employeeModal(emp) {
         <div><label class="label">Sicil No</label><input name="registry_number" type="text" required class="input" placeholder="Örn. 1024" /></div>
         <div><label class="label">Şifre (siz belirleyin)</label><input name="password" type="text" minlength="6" required class="input" placeholder="En az 6 karakter" /></div>
         ` : ''}
-        <div><label class="label">Departman</label><input name="department" required class="input" value="${isEdit ? escapeHtml(emp.department) : ''}" /></div>
+        <div>
+          <label class="label">Departman</label>
+          <select name="department_select" id="department-select" class="input">
+            <option value="Kapı Hattı" ${isEdit && emp.department === 'Kapı Hattı' ? 'selected' : ''}>Kapı Hattı</option>
+            <option value="Montaj Hattı" ${isEdit && emp.department === 'Montaj Hattı' ? 'selected' : ''}>Montaj Hattı</option>
+            <option value="Hazırlama Hattı" ${isEdit && emp.department === 'Hazırlama Hattı' ? 'selected' : ''}>Hazırlama Hattı</option>
+            <option value="__other__" ${isEdit && emp.department && !['Kapı Hattı', 'Montaj Hattı', 'Hazırlama Hattı'].includes(emp.department) ? 'selected' : ''}>Diğer (yazın)</option>
+          </select>
+          <input name="department_other" id="department-other" class="input mt-2 ${isEdit && emp.department && !['Kapı Hattı', 'Montaj Hattı', 'Hazırlama Hattı'].includes(emp.department) ? '' : 'hidden'}" placeholder="Departman adını yazın" value="${isEdit && emp.department && !['Kapı Hattı', 'Montaj Hattı', 'Hazırlama Hattı'].includes(emp.department) ? escapeHtml(emp.department) : ''}" />
+        </div>
         <div class="grid grid-cols-2 gap-4">
           <div><label class="label">Yıllık İzin Hakkı (gün)</label><input name="annual_leave_total" type="number" min="0" required class="input" value="${isEdit ? emp.annual_leave_total : 14}" /></div>
           ${isEdit ? `<div><label class="label">Kullanılan İzin (gün)</label><input name="annual_leave_used" type="number" min="0" required class="input" value="${emp.annual_leave_used}" /></div>` : ''}
@@ -1275,6 +1310,17 @@ document.addEventListener('change', async (e) => {
     await db.collection('reports').doc(id).update({ status });
     await loadAllReports(); render();
   }
+  if (e.target.id === 'department-select') {
+    const other = document.getElementById('department-other');
+    if (other) {
+      if (e.target.value === '__other__') {
+        other.classList.remove('hidden');
+        other.focus();
+      } else {
+        other.classList.add('hidden');
+      }
+    }
+  }
 });
 
 document.addEventListener('input', (e) => {
@@ -1370,9 +1416,15 @@ document.addEventListener('submit', async (e) => {
     btn.disabled = true; btn.textContent = 'Kaydediliyor…';
 
     try {
+      const deptSelect = fd.get('department_select');
+      const department = deptSelect === '__other__' ? (fd.get('department_other') || '').trim() : deptSelect;
+      if (!department) {
+        throw new Error('Lütfen bir departman seçin veya "Diğer" için isim yazın.');
+      }
+
       if (id) {
         await db.collection('profiles').doc(id).update({
-          department: fd.get('department'),
+          department,
           annualLeaveTotal: Number(fd.get('annual_leave_total')),
           annualLeaveUsed: Number(fd.get('annual_leave_used')),
           flexibleHoursStart: fd.get('flexible_hours_start'),
@@ -1395,7 +1447,7 @@ document.addEventListener('submit', async (e) => {
           password: fd.get('password'),
           first_name: fd.get('first_name'),
           last_name: fd.get('last_name'),
-          department: fd.get('department'),
+          department,
           annual_leave_total: Number(fd.get('annual_leave_total')),
           flexible_hours_start: fd.get('flexible_hours_start'),
           flexible_hours_end: fd.get('flexible_hours_end'),

@@ -72,13 +72,20 @@
    AYARLAR — Firebase proje bilgilerinizi buraya girin
    (Firebase Console > Project Settings > General > Your apps > Web app > SDK setup and configuration)
    ===================================================================== */
-const firebaseConfig = {
+ const firebaseConfig = {
+
   apiKey: "AIzaSyADpucVQrCF3C0GF1RgWY0pAbaxiMxjl9E",
+
   authDomain: "izin-portali.firebaseapp.com",
+
   projectId: "izin-portali",
+
   storageBucket: "izin-portali.firebasestorage.app",
+
   messagingSenderId: "1073816187669",
+
   appId: "1:1073816187669:web:40a73a49133f5f1caeef1c"
+
 };
 
 
@@ -735,31 +742,60 @@ function mapRow(rawRow) {
 
 function adminImportView() {
   const rows = state.bulkRows;
-  const preview = rows.length ? `
+
+  const table = `
     <div class="mt-6">
-      <div class="flex items-center justify-between">
-        <p class="text-sm font-medium text-ink-900 dark:text-sand-50">${rows.length} satır bulundu — önizleme</p>
-        <button data-action="import-bulk" ${state.bulkImporting ? 'disabled' : ''} class="btn-primary inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium bg-pine-600 text-white hover:bg-pine-700 disabled:opacity-50">
-          ${state.bulkImporting ? 'Aktarılıyor…' : 'İçeri Aktar'}
-        </button>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm font-medium text-ink-900 dark:text-sand-50">
+          ${rows.length > 0 ? `${rows.length} satır — düzenleyebilirsiniz` : 'Henüz satır yok'}
+        </p>
+        <div class="flex gap-2">
+          <button data-action="add-bulk-row" class="btn-secondary inline-flex items-center justify-center gap-2 rounded-lg px-3.5 py-2 text-xs font-medium bg-sand-100 text-ink-800 hover:bg-sand-200 dark:bg-ink-700 dark:text-sand-100">
+            <i data-lucide="plus" class="w-[14px] h-[14px]"></i> Satır Ekle
+          </button>
+          <button data-action="import-bulk" ${state.bulkImporting || rows.length === 0 ? 'disabled' : ''} class="btn-primary inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium bg-pine-600 text-white hover:bg-pine-700 disabled:opacity-50">
+            ${state.bulkImporting ? 'Aktarılıyor…' : 'İçeri Aktar'}
+          </button>
+        </div>
       </div>
-      <div class="mt-3 max-h-64 overflow-auto rounded-lg border border-black/5 dark:border-white/5">
-        <table class="w-full text-left text-xs">
-          <thead class="bg-sand-50 dark:bg-ink-900 sticky top-0"><tr class="text-ink-800/50 dark:text-sand-100/45">
-            <th class="px-3 py-2 font-medium">Ad Soyad</th><th class="px-3 py-2 font-medium">Sicil No</th>
-            <th class="px-3 py-2 font-medium">Departman</th><th class="px-3 py-2 font-medium">İzin Hakkı</th>
+
+      ${rows.length === 0 ? `
+        <p class="mt-3 text-xs text-ink-800/50 dark:text-sand-100/45">
+          Dosya yükleyin ya da yukarıdaki "Satır Ekle" ile elle çalışan girmeye başlayın.
+        </p>` : `
+      <div class="mt-3 overflow-auto rounded-lg border border-black/5 dark:border-white/5">
+        <table class="w-full min-w-[820px] text-left text-xs">
+          <thead class="bg-sand-50 dark:bg-ink-900"><tr class="text-ink-800/50 dark:text-sand-100/45">
+            <th class="px-2 py-2 font-medium">Ad</th>
+            <th class="px-2 py-2 font-medium">Soyad</th>
+            <th class="px-2 py-2 font-medium">Sicil No</th>
+            <th class="px-2 py-2 font-medium">Departman</th>
+            <th class="px-2 py-2 font-medium">İzin Hakkı</th>
+            <th class="px-2 py-2 font-medium">Başlangıç</th>
+            <th class="px-2 py-2 font-medium">Bitiş</th>
+            <th class="px-2 py-2 font-medium">Şifre (boş=otomatik)</th>
+            <th class="px-2 py-2 font-medium"></th>
           </tr></thead>
           <tbody class="divide-y divide-black/5 dark:divide-white/5">
-            ${rows.map(r => `<tr>
-              <td class="px-3 py-2">${escapeHtml(r.first_name)} ${escapeHtml(r.last_name)}</td>
-              <td class="px-3 py-2">${escapeHtml(r.registry_number)}</td>
-              <td class="px-3 py-2">${escapeHtml(r.department || '—')}</td>
-              <td class="px-3 py-2">${escapeHtml(r.annual_leave_total || 14)}</td>
+            ${rows.map((r, i) => `<tr>
+              <td class="px-1.5 py-1.5"><input class="bulk-cell w-24 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-ink-900 px-2 py-1.5 text-xs" data-row="${i}" data-field="first_name" value="${escapeHtml(r.first_name || '')}" /></td>
+              <td class="px-1.5 py-1.5"><input class="bulk-cell w-24 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-ink-900 px-2 py-1.5 text-xs" data-row="${i}" data-field="last_name" value="${escapeHtml(r.last_name || '')}" /></td>
+              <td class="px-1.5 py-1.5"><input class="bulk-cell w-20 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-ink-900 px-2 py-1.5 text-xs" data-row="${i}" data-field="registry_number" value="${escapeHtml(r.registry_number || '')}" /></td>
+              <td class="px-1.5 py-1.5"><input class="bulk-cell w-24 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-ink-900 px-2 py-1.5 text-xs" data-row="${i}" data-field="department" value="${escapeHtml(r.department || '')}" /></td>
+              <td class="px-1.5 py-1.5"><input type="number" class="bulk-cell w-16 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-ink-900 px-2 py-1.5 text-xs" data-row="${i}" data-field="annual_leave_total" value="${escapeHtml(r.annual_leave_total ?? 14)}" /></td>
+              <td class="px-1.5 py-1.5"><input type="time" class="bulk-cell w-24 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-ink-900 px-2 py-1.5 text-xs" data-row="${i}" data-field="flexible_hours_start" value="${escapeHtml(r.flexible_hours_start || '09:00')}" /></td>
+              <td class="px-1.5 py-1.5"><input type="time" class="bulk-cell w-24 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-ink-900 px-2 py-1.5 text-xs" data-row="${i}" data-field="flexible_hours_end" value="${escapeHtml(r.flexible_hours_end || '18:00')}" /></td>
+              <td class="px-1.5 py-1.5"><input class="bulk-cell w-24 rounded border border-black/10 dark:border-white/10 bg-white dark:bg-ink-900 px-2 py-1.5 text-xs" data-row="${i}" data-field="password" value="${escapeHtml(r.password || '')}" placeholder="otomatik" /></td>
+              <td class="px-1.5 py-1.5">
+                <button data-action="remove-bulk-row" data-index="${i}" class="flex h-7 w-7 items-center justify-center rounded text-ink-800/40 hover:bg-brick-500/10 hover:text-brick-600 dark:text-sand-100/40" aria-label="Satırı sil">
+                  <i data-lucide="trash-2" class="w-[13px] h-[13px]"></i>
+                </button>
+              </td>
             </tr>`).join('')}
           </tbody>
         </table>
-      </div>
-    </div>` : '';
+      </div>`}
+    </div>`;
 
   const results = state.bulkResults ? `
     <div class="mt-6 space-y-1.5">
@@ -776,13 +812,13 @@ function adminImportView() {
   return `
   <div class="grid gap-5 lg:grid-cols-3">
     <div class="card p-6 lg:col-span-2 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">
-      <div id="dropzone" class="flex cursor-pointer flex-col items-center justify-center rounded-xl2 border-2 border-dashed border-pine-300 dark:border-pine-700 bg-pine-50/40 dark:bg-pine-900/10 px-6 py-14 text-center transition hover:bg-pine-50 dark:hover:bg-pine-900/20">
-        <i data-lucide="upload-cloud" class="w-8 h-8 text-pine-600 dark:text-pine-400"></i>
-        <p class="mt-3 text-sm font-medium text-ink-900 dark:text-sand-50">${escapeHtml(state.bulkFileName) || 'Dosyayı sürükleyip bırakın veya tıklayın'}</p>
-        <p class="mt-1 text-xs text-ink-800/50 dark:text-sand-100/45">.csv, .xlsx veya .xls desteklenir</p>
+      <div id="dropzone" class="flex cursor-pointer flex-col items-center justify-center rounded-xl2 border-2 border-dashed border-pine-300 dark:border-pine-700 bg-pine-50/40 dark:bg-pine-900/10 px-6 py-10 text-center transition hover:bg-pine-50 dark:hover:bg-pine-900/20">
+        <i data-lucide="upload-cloud" class="w-7 h-7 text-pine-600 dark:text-pine-400"></i>
+        <p class="mt-2 text-sm font-medium text-ink-900 dark:text-sand-50">${escapeHtml(state.bulkFileName) || 'Dosyayı sürükleyip bırakın veya tıklayın'}</p>
+        <p class="mt-1 text-xs text-ink-800/50 dark:text-sand-100/45">.csv, .xlsx veya .xls desteklenir — veya aşağıdan elle satır ekleyin</p>
         <input id="bulk-file-input" type="file" accept=".csv,.xlsx,.xls" class="hidden" />
       </div>
-      ${preview}
+      ${table}
       ${results}
     </div>
     <div class="card p-6 bg-white dark:bg-ink-800 rounded-xl2 shadow-soft border border-black/5 dark:border-white/5">
@@ -793,6 +829,9 @@ function adminImportView() {
       <p class="mt-2 text-xs leading-relaxed text-ink-800/60 dark:text-sand-100/50">
         Dosyanız şu kolonları içermelidir: <strong>registry_number, first_name, last_name, department, annual_leave_total, flexible_hours_start, flexible_hours_end</strong>.
         Türkçe başlıklar (Sicil No, Ad, Soyad, Departman, Yıllık İzin) da otomatik tanınır. İsteğe bağlı bir <strong>password</strong> kolonu eklerseniz o şifre kullanılır; eklemezseniz her çalışan için otomatik bir şifre üretilir ve sonuç listesinde gösterilir.
+      </p>
+      <p class="mt-2 text-xs leading-relaxed text-ink-800/60 dark:text-sand-100/50">
+        Dosyanız yoksa sorun değil — soldaki tabloya "Satır Ekle" ile elle de girebilirsiniz.
       </p>
       <button data-action="download-template" class="btn-secondary mt-4 w-full text-xs inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-medium bg-sand-100 text-ink-800 hover:bg-sand-200 dark:bg-ink-700 dark:text-sand-100">
         <i data-lucide="download" class="w-[14px] h-[14px]"></i> Şablon İndir (.csv)
@@ -951,6 +990,17 @@ document.addEventListener('click', async (e) => {
     }
     case 'download-template': downloadTemplate(); break;
     case 'import-bulk': await handleBulkImport(); break;
+    case 'add-bulk-row':
+      state.bulkRows = [...state.bulkRows, {
+        first_name: '', last_name: '', registry_number: '', department: '',
+        annual_leave_total: 14, flexible_hours_start: '09:00', flexible_hours_end: '18:00', password: ''
+      }];
+      render();
+      break;
+    case 'remove-bulk-row':
+      state.bulkRows = state.bulkRows.filter((_, idx) => idx !== Number(el.dataset.index));
+      render();
+      break;
   }
 });
 
@@ -967,6 +1017,11 @@ document.addEventListener('input', (e) => {
       const input = document.getElementById('employee-search');
       if (input) { input.focus(); input.setSelectionRange(caret, caret); }
     }
+  }
+  if (e.target.classList.contains('bulk-cell')) {
+    const idx = Number(e.target.dataset.row);
+    const field = e.target.dataset.field;
+    if (state.bulkRows[idx]) state.bulkRows[idx][field] = e.target.value;
   }
 });
 
